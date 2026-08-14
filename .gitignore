@@ -9,3 +9,4 @@ out/
 .npm-cache/
 .pw-browsers/
 .playwright-cli/
+.claude/
