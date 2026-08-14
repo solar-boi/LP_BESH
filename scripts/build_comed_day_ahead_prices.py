@@ -6,10 +6,12 @@ import argparse
 import csv
 import re
 import ssl
+import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -19,6 +21,14 @@ COMED_DAY_AHEAD_SOURCE = "comed_rrtp_day_ahead"
 COMED_DAY_AHEAD_SOURCE_EXISTING = "comed_besh_day_ahead"
 DAY_AHEAD_POINT_RE = re.compile(
     r"Date\.UTC\((\d+),(\d+),(\d+),(\d+),0,0\),\s*([-+]?\d+(?:\.\d+)?)"
+)
+_SSL_CERT_HINT = (
+    "TLS certificate verification failed while contacting ComEd's pricing API.\n"
+    "This is a common macOS python.org issue: this interpreter's default CA bundle isn't "
+    "populated from the system trust store. Fix with one of:\n"
+    "  1. /Applications/Python\\ 3.13/Install_Certificates.command\n"
+    "  2. export SSL_CERT_FILE=$(python3 -m certifi)\n"
+    "(--insecure disables verification as a last resort; not recommended for routine use.)"
 )
 
 
@@ -98,8 +108,13 @@ def fetch_day_ahead_prices(
     params = {"type": "daynexttoday", "date": day.strftime("%Y%m%d")}
     url = f"{COMED_DAY_AHEAD_FEED_URL}?{urlencode(params)}"
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urlopen(request, timeout=60, context=ssl_context) as response:
-        body = response.read().decode("utf-8").strip()
+    try:
+        with urlopen(request, timeout=60, context=ssl_context) as response:
+            body = response.read().decode("utf-8").strip()
+    except URLError as exc:
+        if isinstance(exc.reason, ssl.SSLCertVerificationError):
+            print(_SSL_CERT_HINT, file=sys.stderr)
+        raise
     return parse_day_ahead_payload(body)
 
 

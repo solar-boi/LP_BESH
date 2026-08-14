@@ -5,11 +5,13 @@ from __future__ import annotations
 import csv
 import json
 import ssl
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Iterable
+from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
@@ -17,6 +19,14 @@ from zoneinfo import ZoneInfo
 
 COMED_REALTIME_API_URL = "https://hourlypricing.comed.com/api"
 COMED_TIMEZONE = "America/Chicago"
+_SSL_CERT_HINT = (
+    "TLS certificate verification failed while contacting ComEd's pricing API.\n"
+    "This is a common macOS python.org issue: this interpreter's default CA bundle isn't "
+    "populated from the system trust store. Fix with one of:\n"
+    "  1. /Applications/Python\\ 3.13/Install_Certificates.command\n"
+    "  2. export SSL_CERT_FILE=$(python3 -m certifi)\n"
+    "(--insecure disables verification as a last resort; not recommended for routine use.)"
+)
 
 
 @dataclass(frozen=True)
@@ -63,8 +73,13 @@ def fetch_realtime_5min_prices(
     }
     context = None if verify_ssl else ssl._create_unverified_context()
     url = f"{COMED_REALTIME_API_URL}?{urlencode(params)}"
-    with urlopen(url, timeout=60, context=context) as response:
-        body = response.read().decode("utf-8").strip()
+    try:
+        with urlopen(url, timeout=60, context=context) as response:
+            body = response.read().decode("utf-8").strip()
+    except URLError as exc:
+        if isinstance(exc.reason, ssl.SSLCertVerificationError):
+            print(_SSL_CERT_HINT, file=sys.stderr)
+        raise
     if not body:
         return []
     payload = json.loads(body)
