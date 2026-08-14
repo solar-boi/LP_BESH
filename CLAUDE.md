@@ -31,9 +31,12 @@ PYTHONPATH=src python3 -m lp_besh.cli calculate \
 streamlit run streamlit_app.py --server.fileWatcherType none
 uvicorn lp_besh.api:app --reload          # needs ".[api]"
 
-# rebuild root ComEd price CSVs from public feeds
+# catch up both root price CSVs to today (fills in any missing days since the last run)
+PYTHONPATH=src python3 scripts/update_comed_prices.py
+
+# build a root ComEd price CSV from scratch / rebuild a specific range (lower-level, one feed at a time)
 PYTHONPATH=src python3 scripts/build_comed_realtime_prices.py --start 2022-07-03T00:00 --end 2026-07-04T00:00
-PYTHONPATH=src python3 scripts/build_comed_day_ahead_prices.py
+PYTHONPATH=src python3 scripts/build_comed_day_ahead_prices.py --start 2022-07-03 --end 2026-07-04
 ```
 
 ## Architecture
@@ -48,7 +51,8 @@ src/lp_besh/
   comed_price_builder.py  ComEd real-time 5-min fetch -> hourly aggregation/interpolation
   dashboard_analysis.py   pandas scenario analysis for the dashboard (ScenarioResult)
   streamlit_app.py        dashboard UI
-scripts/                  build the two root price CSVs (real-time + day-ahead feeds)
+scripts/                  build/catch-up the two root price CSVs (real-time + day-ahead feeds)
+  update_comed_prices.py  catch up both root CSVs to today in one command (fills missing days)
 streamlit_app.py          root shim: inserts src/ into sys.path and calls lp_besh.streamlit_app.main
 ```
 

@@ -60,7 +60,7 @@ def main() -> int:
 
     dates_to_fetch = _dates_to_fetch(args)
 
-    existing_rows = _read_existing_rows(args.existing) if args.existing else {}
+    existing_rows = read_existing_rows(args.existing) if args.existing else {}
     fetched_rows: dict[datetime, dict[str, str]] = {}
     empty_dates: list[date] = []
     context = ssl._create_unverified_context() if args.insecure else None
@@ -70,21 +70,13 @@ def main() -> int:
         if not points:
             empty_dates.append(current)
         for point in points:
-            fetched_rows[point.interval_start] = _row_for_price(point)
+            fetched_rows[point.interval_start] = row_for_price(point)
 
-    merged = dict(existing_rows)
-    added = 0
-    replaced = 0
-    for interval_start, row in fetched_rows.items():
-        if interval_start in merged and not args.replace_existing:
-            continue
-        if interval_start in merged:
-            replaced += 1
-        else:
-            added += 1
-        merged[interval_start] = row
+    merged, added, replaced = merge_day_ahead_rows(
+        existing_rows, fetched_rows, replace_existing=args.replace_existing
+    )
 
-    _write_rows(args.output, merged)
+    write_rows(args.output, merged)
     print(f"fetched {len(fetched_rows):,} day-ahead row(s)")
     print(f"preserved {len(existing_rows) - replaced:,} existing row(s)")
     print(f"added {added:,} missing/new row(s)")
@@ -129,7 +121,33 @@ def parse_day_ahead_payload(payload: str) -> list[DayAheadPrice]:
     return rows
 
 
-def _read_existing_rows(path: Path) -> dict[datetime, dict[str, str]]:
+def merge_day_ahead_rows(
+    existing: dict[datetime, dict[str, str]],
+    fetched: dict[datetime, dict[str, str]],
+    *,
+    replace_existing: bool = False,
+) -> tuple[dict[datetime, dict[str, str]], int, int]:
+    """Merge freshly fetched rows into existing rows, keyed by interval_start.
+
+    Returns (merged, added_count, replaced_count). Existing rows are preserved unless
+    `replace_existing` is set, in which case fetched values overwrite matching intervals.
+    """
+
+    merged = dict(existing)
+    added = 0
+    replaced = 0
+    for interval_start, row in fetched.items():
+        if interval_start in merged and not replace_existing:
+            continue
+        if interval_start in merged:
+            replaced += 1
+        else:
+            added += 1
+        merged[interval_start] = row
+    return merged, added, replaced
+
+
+def read_existing_rows(path: Path) -> dict[datetime, dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
         rows: dict[datetime, dict[str, str]] = {}
@@ -143,11 +161,11 @@ def _read_existing_rows(path: Path) -> dict[datetime, dict[str, str]]:
                 ) from exc
             if interval_start in rows:
                 raise ValueError(f"{path}: duplicate interval_start {raw_interval!r}")
-            rows[interval_start] = {field: row.get(field, "") for field in _fieldnames()}
+            rows[interval_start] = {field: row.get(field, "") for field in fieldnames()}
         return rows
 
 
-def _row_for_price(price: DayAheadPrice) -> dict[str, str]:
+def row_for_price(price: DayAheadPrice) -> dict[str, str]:
     dollars = price.price_cents_per_kwh / Decimal("100")
     return {
         "interval_start": price.interval_start.strftime("%Y-%m-%d %H:%M"),
@@ -161,16 +179,16 @@ def _row_for_price(price: DayAheadPrice) -> dict[str, str]:
     }
 
 
-def _write_rows(path: Path, rows: dict[datetime, dict[str, str]]) -> None:
+def write_rows(path: Path, rows: dict[datetime, dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=_fieldnames())
+        writer = csv.DictWriter(file, fieldnames=fieldnames())
         writer.writeheader()
         for interval_start in sorted(rows):
             writer.writerow(rows[interval_start])
 
 
-def _fieldnames() -> list[str]:
+def fieldnames() -> list[str]:
     return [
         "interval_start",
         "date",

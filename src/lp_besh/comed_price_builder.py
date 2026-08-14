@@ -243,6 +243,52 @@ def _interpolate_realtime_hour(
     )
 
 
+def read_realtime_hourly_csv(path: Path) -> dict[datetime, HourlyRealTimePrice]:
+    """Read an existing real-time hourly CSV back into typed rows, keyed by interval_start."""
+
+    with path.open("r", encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+        rows: dict[datetime, HourlyRealTimePrice] = {}
+        for row_number, row in enumerate(reader, start=2):
+            raw_interval = row.get("interval_start", "")
+            try:
+                interval_start = datetime.strptime(raw_interval, "%Y-%m-%d %H:%M")
+            except ValueError as exc:
+                raise ValueError(
+                    f"{path}: row {row_number} has invalid interval_start {raw_interval!r}"
+                ) from exc
+            if interval_start in rows:
+                raise ValueError(f"{path}: duplicate interval_start {raw_interval!r}")
+            rows[interval_start] = HourlyRealTimePrice(
+                interval_start=interval_start,
+                price_dollars_per_kwh=Decimal(row["price_dollars_per_kwh"]),
+                price_cents_per_kwh=Decimal(row["price_cents_per_kwh"]),
+                raw_point_count=int(row["raw_point_count"]),
+                source_bucket_start_local=_parse_local(row.get("source_bucket_start_local", "")),
+                source_bucket_end_local=_parse_local(row.get("source_bucket_end_local", "")),
+                source_bucket_start_utc=_parse_utc(row.get("source_bucket_start_utc", "")),
+                source_bucket_end_utc=_parse_utc(row.get("source_bucket_end_utc", "")),
+                price_quality=row["price_quality"],
+                source=row["source"],
+            )
+        return rows
+
+
+def merge_realtime_rows(
+    existing: dict[datetime, HourlyRealTimePrice],
+    new: Iterable[HourlyRealTimePrice],
+) -> list[HourlyRealTimePrice]:
+    """Merge freshly fetched hourly rows into existing rows, keyed by interval_start.
+
+    Existing rows are preserved on conflict; only intervals absent from `existing` are added.
+    """
+
+    merged = dict(existing)
+    for row in new:
+        merged.setdefault(row.interval_start, row)
+    return [merged[interval_start] for interval_start in sorted(merged)]
+
+
 def write_realtime_hourly_csv(path: Path, rows: Iterable[HourlyRealTimePrice]) -> None:
     """Write real-time hourly price rows using the project root CSV schema."""
 
@@ -297,3 +343,11 @@ def _format_local(value: datetime | None) -> str:
 
 def _format_utc(value: datetime | None) -> str:
     return "" if value is None else value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_local(value: str) -> datetime | None:
+    return None if not value else datetime.strptime(value, "%Y-%m-%d %H:%M:%S%z")
+
+
+def _parse_utc(value: str) -> datetime | None:
+    return None if not value else datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)

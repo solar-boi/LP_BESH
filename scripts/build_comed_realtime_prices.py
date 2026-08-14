@@ -10,6 +10,8 @@ from lp_besh.comed_price_builder import (
     aggregate_realtime_5min_to_hourly,
     fetch_realtime_5min_prices_for_interval_range,
     fill_internal_missing_realtime_hours,
+    merge_realtime_rows,
+    read_realtime_hourly_csv,
     write_realtime_hourly_csv,
 )
 
@@ -19,6 +21,11 @@ def main() -> int:
     parser.add_argument("--start", required=True, help="First hourly interval_start, e.g. 2022-07-03T00:00")
     parser.add_argument("--end", required=True, help="Exclusive end hourly interval_start, e.g. 2026-07-04T00:00")
     parser.add_argument("--output", type=Path, default=Path("comed_realtime_hourly_pricing.csv"))
+    parser.add_argument(
+        "--existing",
+        type=Path,
+        help="Existing CSV to merge. Existing intervals are preserved; only missing ones are added.",
+    )
     parser.add_argument("--batch-days", type=int, default=14)
     parser.add_argument(
         "--no-fill-missing",
@@ -48,10 +55,20 @@ def main() -> int:
     if not args.no_fill_missing:
         rows = fill_internal_missing_realtime_hours(rows)
         rows = [row for row in rows if interval_start <= row.interval_start < interval_end_exclusive]
+
+    fetched_count = len(rows)
+    existing_count = 0
+    if args.existing:
+        existing = read_realtime_hourly_csv(args.existing)
+        existing_count = len(existing)
+        rows = merge_realtime_rows(existing, rows)
     write_realtime_hourly_csv(args.output, rows)
 
     partial_count = sum(1 for row in rows if row.raw_point_count < 12)
     imputed_count = sum(1 for row in rows if row.price_quality == "imputed_missing_hour")
+    print(f"fetched {fetched_count:,} hourly row(s) for the requested range")
+    if args.existing:
+        print(f"preserved {existing_count:,} existing row(s), added {len(rows) - existing_count:,} new row(s)")
     print(f"wrote {len(rows):,} hourly rows to {args.output}")
     print(f"included {partial_count:,} row(s) with fewer than 12 source points")
     print(f"imputed {imputed_count:,} fully missing internal hourly row(s)")
